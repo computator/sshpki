@@ -2,6 +2,7 @@ import os
 import errno
 import fcntl
 import tempfile
+import subprocess
 
 def _get_new_serial(pki_root):
     with open(os.path.join(os.path.abspath(pki_root), '.serial.lock'), 'w') as lockf:
@@ -21,8 +22,17 @@ def _get_new_serial(pki_root):
         fcntl.flock(lockf, fcntl.LOCK_UN)
     return old_serial + 1
 
-def _sign_key(ca_key, key, identity, host_key=False, principals=None, validity=None):
-    pass
+def _sign_key(ca_key, key, identity, serial, principals=None, validity=None, host_key=False):
+    args = ['ssh-keygen', '-s', ca_key, '-I', identity, '-z', str(serial)]
+    if host_key:
+        args.append('-h')
+    if principals:
+        args.extend(['-n', ','.join(principals)])
+    if validity:
+        args.extend(['-V', validity])
+    args.append(key)
+    subprocess.check_call(args)
+    return key + '-cert.pub'
 
 def sign_key(pki_root, ca_key, key, identity, principals, validity, host_key=False, key_is_str=False):
     pass
