@@ -74,4 +74,26 @@ def sign_key(pki_root, ca_key, key, identity, principals, validity, host_key=Fal
     return certfile
 
 def find_cert(pki_root, key, key_is_str=False):
-    pass
+    if not os.path.isdir(pki_root):
+        raise FileNotFoundError("'{}' does not exist".format(pki_root))
+    if not key_is_str and not os.path.isfile(key):
+        raise FileNotFoundError("'{}' does not exist".format(key))
+
+    certsdir = os.path.join(os.path.abspath(pki_root), 'certs')
+
+    if not key_is_str:
+        with open(key, 'r') as keyfile:
+            key = keyfile.read(4096)
+
+    keyfile = None
+    try:
+        with tempfile.NamedTemporaryFile('w', dir=os.path.abspath(pki_root), delete=False) as key_copy:
+            key_copy.write(key)
+            keyfile = key_copy.name
+        certfile = os.path.join(certsdir, _get_fingerprint(keyfile))
+    finally:
+        if keyfile:
+            os.remove(keyfile)
+
+    if os.path.exists(certfile):
+        return certfile
