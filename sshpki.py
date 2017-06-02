@@ -6,26 +6,102 @@ import tempfile
 import subprocess
 import re
 
-class FileNotFoundError(Exception):
-    pass
+class FileNotFoundError(Exception): pass
+class ReadOnlyError(Exception): pass
 
-def _get_new_serial(pki_root):
-    with open(os.path.join(os.path.abspath(pki_root), '.serial.lock'), 'w') as lockf:
-        fcntl.flock(lockf, fcntl.LOCK_EX)
+class SshPki:
+
+    class _PkiLock:
+        def __init__(self, pki):
+            self.pki = pki
+
+        def __enter__(self):
+            self.lockf = open(os.path.join(self.pki.pki_root, '.serial.lock'), 'w')
+            fcntl.flock(self.lockf, fcntl.LOCK_EX)
+
+        def __exit__(self, *exception):
+            fcntl.flock(self.lockf, fcntl.LOCK_UN)
+            self.lockf.close()
+
+    def __init__(self, pki_root, ca_key=None):
+        self.pki_root = os.path.abspath(pki_root)
+        self.ca_key = ca_key
+
+        if not os.path.isdir(self.pki_root):
+            raise FileNotFoundError("'{}' does not exist".format(self.pki_root))
+        if self.ca_key and not os.path.isfile(ca_key):
+            raise FileNotFoundError("'{}' does not exist".format(self.ca_key))
+
+        self.certsdir = os.path.join(self.pki_root, 'certs')
+        if not os.path.isdir(self.certsdir):
+            os.mkdir(self.certsdir)
+            
+        self.lock = self._PkiLock(self)
+
+    def _get_new_serial(self):
+        with self.lock:
+            old_serial = 0
+            try:
+                with open(os.path.join(self.pki_root, 'serial'), 'r') as serial_file:
+                    old_serial = int(serial_file.read(32))
+            except IOError as err:
+                if err.errno is not errno.ENOENT:
+                    raise err
+            with tempfile.NamedTemporaryFile('w', dir=self.pki_root, delete=False) as new_file:
+                new_file.write(str(old_serial + 1))
+                temp_name = new_file.name
+            os.rename(temp_name, os.path.join(self.pki_root, 'serial'))
+        return old_serial + 1
+
+    def sign_key(self, key, identity, principals, validity, host_key=False, key_is_str=False):
+        if not self.ca_key:
+            raise ReadOnlyError("No CA Key loaded")
+        if not key_is_str:
+            if not os.path.isfile(key):
+                raise FileNotFoundError("'{}' does not exist".format(key))
+            with open(key, 'r') as key_tmp:
+                key = key_tmp.read(4096)
+
+        with _TempDir(self.pki_root) as tmpdir:
+            with tempfile.NamedTemporaryFile('w', dir=tmpdir, delete=False) as key_copy:
+                key_copy.write(key)
+                keyfile = key_copy.name
+            certpath = os.path.join(self.certsdir, _get_fingerprint(keyfile))
+            out_cert = _sign_key(self.ca_key, keyfile, identity, self._get_new_serial(), principals, validity, host_key)
+            os.rename(out_cert, certpath)
+        return certpath
+
+    def find_cert(self, key, key_is_str=False):
+        if not key_is_str:
+            if not os.path.isfile(key):
+                raise FileNotFoundError("'{}' does not exist".format(key))
+            with open(key, 'r') as key_tmp:
+                key = key_tmp.read(4096)
+
+        keyfile = None
         try:
-            with open(os.path.join(os.path.abspath(pki_root), 'serial'), 'r') as serial_file:
-                old_serial = int(serial_file.read(32))
-        except IOError as err:
-            if err.errno is errno.ENOENT:
-                old_serial = 0
-            else:
-                raise err
-        with tempfile.NamedTemporaryFile('w', dir=os.path.abspath(pki_root), delete=False) as new_file:
-            new_file.write(str(old_serial + 1))
-            temp_name = new_file.name
-        os.rename(temp_name, os.path.join(os.path.abspath(pki_root), 'serial'))
-        fcntl.flock(lockf, fcntl.LOCK_UN)
-    return old_serial + 1
+            with tempfile.NamedTemporaryFile('w', dir=self.pki_root, delete=False) as key_copy:
+                key_copy.write(key)
+                keyfile = key_copy.name
+            fingerprint = _get_fingerprint(keyfile)
+        finally:
+            if keyfile:
+                os.remove(keyfile)
+
+        certpath = os.path.join(self.certsdir, fingerprint)
+        if os.path.exists(certpath):
+            return certpath
+
+class _TempDir:
+    def __init__(self, path):
+        self.path = path
+
+    def __enter__(self):
+        self.tmpdir = tempfile.mkdtemp(dir=self.path)
+        return self.tmpdir
+
+    def __exit__(self, *exception):
+        shutil.rmtree(self.tmpdir)
 
 def _sign_key(ca_key, key, identity, serial, principals=None, validity=None, host_key=False):
     args = ['ssh-keygen', '-q', '-s', ca_key, '-I', identity, '-z', str(serial)]
@@ -44,56 +120,3 @@ def _get_fingerprint(keyfile):
     fingerprint = re.match(r'\d+\s+(?:(?:SHA256|MD5):)?([^\s]+)', output).group(1).replace(':', '')
     return fingerprint.replace('+', '-').replace('/', '_')
 
-def sign_key(pki_root, ca_key, key, identity, principals, validity, host_key=False, key_is_str=False):
-    if not os.path.isdir(pki_root):
-        raise FileNotFoundError("'{}' does not exist".format(pki_root))
-    if not os.path.isfile(ca_key):
-        raise FileNotFoundError("'{}' does not exist".format(ca_key))
-    if not key_is_str and not os.path.isfile(key):
-        raise FileNotFoundError("'{}' does not exist".format(key))
-
-    certsdir = os.path.join(os.path.abspath(pki_root), 'certs')
-    if not os.path.isdir(certsdir):
-        os.mkdir(certsdir)
-
-    if not key_is_str:
-        with open(key, 'r') as keyfile:
-            key = keyfile.read(4096)
-
-    tmpdir = tempfile.mkdtemp(dir=pki_root)
-    try:
-        with tempfile.NamedTemporaryFile('w', dir=tmpdir, delete=False) as key_copy:
-            key_copy.write(key)
-            keyfile = key_copy.name
-        certfile = os.path.join(certsdir, _get_fingerprint(keyfile))
-        out_cert = _sign_key(ca_key, keyfile, identity, _get_new_serial(pki_root), principals, validity, host_key)
-        os.rename(out_cert, certfile)
-    finally:
-        shutil.rmtree(tmpdir)
-
-    return certfile
-
-def find_cert(pki_root, key, key_is_str=False):
-    if not os.path.isdir(pki_root):
-        raise FileNotFoundError("'{}' does not exist".format(pki_root))
-    if not key_is_str and not os.path.isfile(key):
-        raise FileNotFoundError("'{}' does not exist".format(key))
-
-    certsdir = os.path.join(os.path.abspath(pki_root), 'certs')
-
-    if not key_is_str:
-        with open(key, 'r') as keyfile:
-            key = keyfile.read(4096)
-
-    keyfile = None
-    try:
-        with tempfile.NamedTemporaryFile('w', dir=os.path.abspath(pki_root), delete=False) as key_copy:
-            key_copy.write(key)
-            keyfile = key_copy.name
-        certfile = os.path.join(certsdir, _get_fingerprint(keyfile))
-    finally:
-        if keyfile:
-            os.remove(keyfile)
-
-    if os.path.exists(certfile):
-        return certfile
