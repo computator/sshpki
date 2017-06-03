@@ -24,13 +24,13 @@ class SshPki:
             fcntl.flock(self.lockf, fcntl.LOCK_UN)
             self.lockf.close()
 
-    def __init__(self, pki_root, ca_key=None):
+    def __init__(self, pki_root, ca_privkey=None):
         self.pki_root = path.abspath(pki_root)
-        self.ca_key = ca_key
+        self.ca_key = ca_privkey
 
         if not path.isdir(self.pki_root):
             raise FileNotFoundError("'{}' does not exist".format(self.pki_root))
-        if self.ca_key and not path.isfile(ca_key):
+        if self.ca_key and not path.isfile(self.ca_key):
             raise FileNotFoundError("'{}' does not exist".format(self.ca_key))
 
         self.certsdir = path.join(self.pki_root, 'certs')
