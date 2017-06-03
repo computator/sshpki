@@ -59,48 +59,62 @@ class SshPki:
             os.rename(temp_name, path.join(self.pki_root, 'serial'))
         return old_serial + 1
 
-    def sign_key(self, key, identity, principals, validity, host_key=False, key_is_str=False):
+    def sign_key(self, identity, principals, validity, host_key=False, keystr=None, keyfile=None):
+        if not keystr and not keyfile:
+            raise RuntimeError("Either 'keystr' or 'keyfile' must be specified")
+        elif keyfile and keystr:
+            raise RuntimeError("Only one of 'keystr' or 'keyfile' can be specified")
+
         if not self.ca_key:
             raise ReadOnlyError("No CA Key loaded")
-        if not key_is_str:
-            if not path.isfile(key):
-                raise FileNotFoundError("'{}' does not exist".format(key))
-            with open(key, 'r') as key_tmp:
+        if keyfile:
+            if not path.isfile(keyfile):
+                raise FileNotFoundError("'{}' does not exist".format(keyfile))
+            with open(keyfile, 'r') as key_tmp:
                 key = key_tmp.read(4096)
+        else:
+            key = keystr
 
         with _TempDir(self.pki_root) as tmpdir:
             with tempfile.NamedTemporaryFile('w', dir=tmpdir, delete=False) as key_copy:
                 key_copy.write(key)
-                keyfile = key_copy.name
+                keypath = key_copy.name
             if key in self._fingerprint_cache:
                 fingerprint = self._fingerprint_cache[key]
             else:
-                fingerprint = _get_fingerprint(keyfile)
+                fingerprint = _get_fingerprint(keypath)
                 self._fingerprint_cache[key] = fingerprint
             certpath = path.join(self.certsdir, fingerprint)
-            out_cert = _sign_key(self.ca_key, keyfile, identity, self._get_new_serial(), principals, validity, host_key)
+            out_cert = _sign_key(self.ca_key, keypath, identity, self._get_new_serial(), principals, validity, host_key)
             os.rename(out_cert, certpath)
         return certpath
 
-    def find_cert(self, key, key_is_str=False):
-        if not key_is_str:
-            if not path.isfile(key):
-                raise FileNotFoundError("'{}' does not exist".format(key))
-            with open(key, 'r') as key_tmp:
+    def find_cert(self, keystr=None, keyfile=None):
+        if not keystr and not keyfile:
+            raise RuntimeError("Either 'keystr' or 'keyfile' must be specified")
+        elif keyfile and keystr:
+            raise RuntimeError("Only one of 'keystr' or 'keyfile' can be specified")
+
+        if keyfile:
+            if not path.isfile(keyfile):
+                raise FileNotFoundError("'{}' does not exist".format(keyfile))
+            with open(keyfile, 'r') as key_tmp:
                 key = key_tmp.read(4096)
+        else:
+            key = keystr
 
         if key in self._fingerprint_cache:
             fingerprint = self._fingerprint_cache[key]
         else:
-            keyfile = None
+            keypath = None
             try:
                 with tempfile.NamedTemporaryFile('w', dir=self.pki_root, delete=False) as key_copy:
                     key_copy.write(key)
-                    keyfile = key_copy.name
-                fingerprint = _get_fingerprint(keyfile)
+                    keypath = key_copy.name
+                fingerprint = _get_fingerprint(keypath)
             finally:
-                if keyfile:
-                    os.remove(keyfile)
+                if keypath:
+                    os.remove(keypath)
             self._fingerprint_cache[key] = fingerprint
 
         certpath = path.join(self.certsdir, fingerprint)
