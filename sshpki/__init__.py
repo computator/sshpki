@@ -6,9 +6,12 @@ import fcntl
 import tempfile
 import subprocess
 import re
+import logging
 
 class FileNotFoundError(Exception): pass
 class ReadOnlyError(Exception): pass
+
+log = logging.getLogger(__name__)
 
 class SshPki:
 
@@ -105,7 +108,7 @@ class _TempDir:
         shutil.rmtree(self.tmpdir)
 
 def _sign_key(ca_key, key, identity, serial, principals=None, validity=None, host_key=False):
-    args = ['ssh-keygen', '-q', '-s', ca_key, '-I', identity, '-z', str(serial)]
+    args = ['ssh-keygen', '-s', ca_key, '-I', identity, '-z', str(serial)]
     if host_key:
         args.append('-h')
     if principals:
@@ -113,11 +116,13 @@ def _sign_key(ca_key, key, identity, serial, principals=None, validity=None, hos
     if validity:
         args.extend(['-V', validity])
     args.append(key)
-    subprocess.check_call(args)
+    output = subprocess.check_output(args, stderr=subprocess.STDOUT).strip()
+    log.info("%s", output)
     return key + '-cert.pub'
 
 def _get_fingerprint(keyfile):
     output = subprocess.check_output(['ssh-keygen', '-l', '-f', keyfile])
     fingerprint = re.match(r'\d+\s+(?:(?:SHA256|MD5):)?([^\s]+)', output).group(1).replace(':', '')
+    log.trace("Fingerprint for %s: %s", keyfile, fingerprint)
     return fingerprint.replace('+', '-').replace('/', '_')
 
