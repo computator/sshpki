@@ -123,6 +123,6 @@ def _sign_key(ca_key, key, identity, serial, principals=None, validity=None, hos
 def _get_fingerprint(keyfile):
     output = subprocess.check_output(['ssh-keygen', '-l', '-f', keyfile])
     fingerprint = re.match(r'\d+\s+(?:(?:SHA256|MD5):)?([^\s]+)', output).group(1).replace(':', '')
-    log.trace("Fingerprint for %s: %s", keyfile, fingerprint)
+    log.debug("Fingerprint for %s: %s", keyfile, fingerprint)
     return fingerprint.replace('+', '-').replace('/', '_')
 
