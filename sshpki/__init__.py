@@ -15,6 +15,8 @@ log = logging.getLogger(__name__)
 
 class SshPki:
 
+    _fingerprint_cache = {}
+
     class _PkiLock:
         def __init__(self, pki):
             self.pki = pki
@@ -70,7 +72,12 @@ class SshPki:
             with tempfile.NamedTemporaryFile('w', dir=tmpdir, delete=False) as key_copy:
                 key_copy.write(key)
                 keyfile = key_copy.name
-            certpath = path.join(self.certsdir, _get_fingerprint(keyfile))
+            if key in self._fingerprint_cache:
+                fingerprint = self._fingerprint_cache[key]
+            else:
+                fingerprint = _get_fingerprint(keyfile)
+                self._fingerprint_cache[key] = fingerprint
+            certpath = path.join(self.certsdir, fingerprint)
             out_cert = _sign_key(self.ca_key, keyfile, identity, self._get_new_serial(), principals, validity, host_key)
             os.rename(out_cert, certpath)
         return certpath
@@ -82,15 +89,19 @@ class SshPki:
             with open(key, 'r') as key_tmp:
                 key = key_tmp.read(4096)
 
-        keyfile = None
-        try:
-            with tempfile.NamedTemporaryFile('w', dir=self.pki_root, delete=False) as key_copy:
-                key_copy.write(key)
-                keyfile = key_copy.name
-            fingerprint = _get_fingerprint(keyfile)
-        finally:
-            if keyfile:
-                os.remove(keyfile)
+        if key in self._fingerprint_cache:
+            fingerprint = self._fingerprint_cache[key]
+        else:
+            keyfile = None
+            try:
+                with tempfile.NamedTemporaryFile('w', dir=self.pki_root, delete=False) as key_copy:
+                    key_copy.write(key)
+                    keyfile = key_copy.name
+                fingerprint = _get_fingerprint(keyfile)
+            finally:
+                if keyfile:
+                    os.remove(keyfile)
+            self._fingerprint_cache[key] = fingerprint
 
         certpath = path.join(self.certsdir, fingerprint)
         if path.exists(certpath):
