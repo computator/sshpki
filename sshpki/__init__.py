@@ -141,12 +141,20 @@ def _sign_key(ca_key, key, identity, serial, principals=None, validity=None, hos
     if validity:
         args.extend(['-V', validity])
     args.append(key)
-    output = subprocess.check_output(args, stderr=subprocess.STDOUT).strip()
+    try:
+        output = subprocess.check_output(args, stderr=subprocess.STDOUT).strip()
+    except subprocess.CalledProcessError as e:
+        log.error("ssh-keygen returned an error: %s", e.output)
+        raise e
     log.info("%s", output)
     return key + '-cert.pub'
 
 def _get_fingerprint(keyfile):
-    output = subprocess.check_output(['ssh-keygen', '-l', '-f', keyfile])
+    try:
+        output = subprocess.check_output(['ssh-keygen', '-l', '-f', keyfile], stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as e:
+        log.error("ssh-keygen returned an error: %s", e.output)
+        raise e
     fingerprint = re.match(r'\d+\s+(?:(?:SHA256|MD5):)?([^\s]+)', output).group(1).replace(':', '')
     log.debug("Fingerprint for %s: %s", keyfile, fingerprint)
     return fingerprint.replace('+', '-').replace('/', '_')
