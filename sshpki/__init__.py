@@ -7,11 +7,52 @@ import tempfile
 import subprocess
 import re
 import logging
+import yaml
 
 class FileNotFoundError(Exception): pass
 class ReadOnlyError(Exception): pass
 
 log = logging.getLogger(__name__)
+
+def get_cert_info(certstr=None, certfile=None):
+    if not certstr and not certfile:
+        raise RuntimeError("Either 'certstr' or 'certfile' must be specified")
+    elif certfile and certstr:
+        raise RuntimeError("Only one of 'certstr' or 'certfile' can be specified")
+
+    tmp_cert = None
+    try:
+        if certstr:
+            with tempfile.NamedTemporaryFile('w', delete=False) as f:
+                f.write(certstr)
+                tmp_cert = f.name
+        try:
+            output = subprocess.check_output(['ssh-keygen', '-L', '-f', tmp_cert if certstr else certfile], stderr=subprocess.STDOUT)
+        except subprocess.CalledProcessError as e:
+            log.error("ssh-keygen returned an error: %s", e.output)
+            raise e
+    finally:
+        if certstr and tmp_cert:
+            os.remove(tmp_cert)
+
+    data = output.split('\n', 1)[1]
+    # add dashes to the beginning of lists
+    data = data.replace(' '*8*2, ' '*8*2 + '- ')
+    data = yaml.load(data)
+
+    for field in ['Principals', 'Extensions', 'Critical Options']:
+        if data[field] == '(none)':
+            data[field] = []
+    data['Principals'] = map(str, data['Principals'])
+    for field in ['Extensions', 'Critical Options']:
+        data[field] = {k: v if sep else True for k, sep, v in [opt.partition(' ') for opt in data[field]]}
+    if data['Valid'] == 'forever':
+        data['Valid'] = {'forever': True}
+    else:
+        data['Valid'] = dict([data['Valid'].split()[i:i+2] for i in range(0, 4, 2)])
+        data['Valid']['forever'] = False
+
+    return data
 
 class SshPki:
     _fingerprint_cache = {}
