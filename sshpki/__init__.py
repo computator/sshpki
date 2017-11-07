@@ -98,7 +98,7 @@ class SshPki:
         log.debug("Fingerprint for %s: %s", keyfile, fingerprint)
         return fingerprint.replace('+', '-').replace('/', '_')
 
-    def _sign_keyfile(self, keyfile, identity, serial, principals=None, validity=None, host_key=False):
+    def _sign_keyfile(self, keyfile, identity, serial, principals=None, validity=None, options=[], host_key=False):
         args = ['ssh-keygen', '-s', self.ca_key, '-I', identity, '-z', str(serial)]
         if host_key:
             args.append('-h')
@@ -106,6 +106,9 @@ class SshPki:
             args.extend(['-n', ','.join(principals)])
         if validity:
             args.extend(['-V', validity])
+        if options:
+            for option in options:
+                args.extend(['-O', option])
         args.append(keyfile)
         log.debug("Calling ssh-keygen with args: %s", args)
         try:
@@ -116,7 +119,7 @@ class SshPki:
         log.info("%s", output)
         return keyfile + '-cert.pub'
 
-    def sign_key(self, identity, principals, validity, host_key=False, keystr=None, keyfile=None):
+    def sign_key(self, identity, principals, validity, options=[], host_key=False, keystr=None, keyfile=None):
         if not keystr and not keyfile:
             raise RuntimeError("Either 'keystr' or 'keyfile' must be specified")
         elif keyfile and keystr:
@@ -147,7 +150,7 @@ class SshPki:
                 self._fingerprint_cache[key] = fingerprint
             certpath = path.join(self.certsdir, fingerprint)
             log.debug("Signing key '%s'", keypath)
-            out_cert = self._sign_keyfile(keypath, identity, self._get_new_serial(), principals, validity, host_key)
+            out_cert = self._sign_keyfile(keypath, identity, self._get_new_serial(), principals, validity, options, host_key)
             log.debug("Moving created certificate '%s' to '%s'", out_cert, certpath)
             os.rename(out_cert, certpath)
         return certpath
