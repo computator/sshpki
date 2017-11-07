@@ -11,6 +11,7 @@ import yaml
 
 class FileNotFoundError(Exception): pass
 class ReadOnlyError(Exception): pass
+class InvalidKeyError(Exception): pass
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +131,9 @@ class SshPki:
                 key = key_tmp.read(4096)
         else:
             key = keystr
+
+        if 'PRIVATE KEY' in key:
+            raise InvalidKeyError("Trying to sign a private key! Only public keys can be signed.")
 
         with _TempDir(self.pki_root) as tmpdir:
             log.debug("Created temporary directory '%s' to sign key in", tmpdir)
